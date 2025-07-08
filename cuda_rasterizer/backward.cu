@@ -412,7 +412,7 @@ __global__ void preprocessCUDA(
 }
 
 // Backward version of the rendering procedure.
-template <uint32_t C>
+template <uint32_t C, uint32_t CL>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -423,16 +423,19 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
 	const float* __restrict__ depths,
+	const float* __restrict__ clip_features,
 	const float* __restrict__ accum_alphas,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
 	const float* __restrict__ dL_dpixel_depths,
 	const float* __restrict__ dL_dpixel_alphas,
+	const float* __restrict__ dL_dpixel_clips, // 新增：CLIP特征梯度输入
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_ddepths)
+	float* __restrict__ dL_ddepths,
+	float* __restrict__ dL_dclip) // 新增：CLIP特征梯度输出
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -456,6 +459,8 @@ renderCUDA(
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
 	__shared__ float collected_depths[BLOCK_SIZE];
+	// 添加CLIP特征相关的共享内存
+    __shared__ float collected_clips[CL * BLOCK_SIZE]; // 每个高斯椭球的CLIP特征
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -470,19 +475,24 @@ renderCUDA(
 	float accum_rec[C] = { 0 };
 	float accum_red = 0;
 	float accum_rea = 0;
+	float accum_rec_clip[CL] = { 0 };
 	float dL_dpixel[C];
 	float dL_dpixel_depth;
 	float dL_dpixel_alpha;
+	float dL_dpixel_clip[CL];
 	if (inside) 
 	{
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
 		dL_dpixel_depth = dL_dpixel_depths[pix_id];
 		dL_dpixel_alpha = dL_dpixel_alphas[pix_id];
+		for (int i = 0; i < CL; i++)
+		    dL_dpixel_clip[i] = dL_dpixel_clips[i * H * W + pix_id];
 	}
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
 	float last_depth = 0;
+	float last_clip[CL] = { 0 };
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
 	const float ddelx_dx = 0.5 * W;
@@ -504,6 +514,8 @@ renderCUDA(
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 			collected_depths[block.thread_rank()] = depths[coll_id];
+			for (int i = 0; i < CL; i++)
+            	collected_clips[i * BLOCK_SIZE + block.thread_rank()] = clip_features[coll_id * CL + i];
 		}
 		block.sync();
 
@@ -531,6 +543,7 @@ renderCUDA(
 
 			T = T / (1.f - alpha);
 			const float dchannel_dcolor = alpha * T;
+			const float dchannel_dclip = alpha * T;
 			const float dpixel_depth_ddepth = alpha * T;
 
 			// Propagate gradients to per-Gaussian colors and keep
@@ -552,6 +565,20 @@ renderCUDA(
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
+
+			// CLIP特征梯度计算
+			for (int ch = 0; ch < CL; ch++)
+			{
+				const float clip_val = collected_clips[ch * BLOCK_SIZE + j];
+				accum_rec_clip[ch] = last_alpha * last_clip[ch] + (1.f - last_alpha) * accum_rec_clip[ch];
+				last_clip[ch] = clip_val;
+
+				const float dL_dchannel_clip = dL_dpixel_clip[ch];
+				dL_dalpha += (clip_val - accum_rec_clip[ch]) * dL_dchannel_clip;
+
+				atomicAdd(&(dL_dclip[global_id * CL + ch]), dchannel_dclip * dL_dchannel_clip);
+			}
+			
 			const float dep = collected_depths[j];
 			accum_red = last_alpha * last_depth + (1.f - last_alpha) * accum_red;
 			last_depth = dep;
@@ -669,18 +696,21 @@ void BACKWARD::render(
 	const float4* conic_opacity,
 	const float* colors,
 	const float* depths,
+	const float* clip_features,
 	const float* accum_alphas,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
 	const float* dL_dpixel_depths,
 	const float* dL_dpixel_alphas,
+	const float* dL_dpixel_clips, // 新增：CLIP特征梯度输入 [768][H][W]
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_ddepths)
+	float* dL_ddepths,
+	float* dL_dclip) // 新增：CLIP特征梯度输出 [P][768]
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+	renderCUDA<NUM_CHANNELS, NUM_CLIP> << <grid, block >> >(
 		ranges,
 		point_list,
 		W, H,
@@ -689,14 +719,17 @@ void BACKWARD::render(
 		conic_opacity,
 		colors,
 		depths,
+		clip_features,
 		accum_alphas,
 		n_contrib,
 		dL_dpixels,
 		dL_dpixel_depths,
 		dL_dpixel_alphas,
+		dL_dpixel_clips, // 新增参数
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
-		dL_ddepths);
+		dL_ddepths,
+		dL_dclip);
 }

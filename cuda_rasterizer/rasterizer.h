@@ -15,6 +15,7 @@
 #include <vector>
 #include <functional>
 
+
 namespace CudaRasterizer
 {
 	class Rasterizer
@@ -37,6 +38,7 @@ namespace CudaRasterizer
 			const int width, int height,
 			const float* means3D,
 			const float* shs,
+			const float* clip_features,
 			const float* colors_precomp,
 			const float* opacities,
 			const float* scales,
@@ -51,6 +53,7 @@ namespace CudaRasterizer
 			float* out_color,
 			float* out_depth,
 			float* out_alpha,
+			float* out_clip_features,
 			int* radii = nullptr,
 			bool debug = false);
 
@@ -60,6 +63,7 @@ namespace CudaRasterizer
 			const int width, int height,
 			const float* means3D,
 			const float* shs,
+			const float* clip_features,
 			const float* colors_precomp,
 			const float* scales,
 			const float scale_modifier,
@@ -77,11 +81,13 @@ namespace CudaRasterizer
 			const float* dL_dpix,
 			const float* dL_dpix_depth,
 			const float* dL_dpix_dalpha,
+			const float* dL_dpix_dclip,
 			float* dL_dmean2D,
 			float* dL_dconic,
 			float* dL_dopacity,
 			float* dL_dcolor,
 			float* dL_ddepth,
+			float* dL_dclip,
 			float* dL_dmean3D,
 			float* dL_dcov3D,
 			float* dL_dsh,

@@ -13,6 +13,7 @@
 #define CUDA_RASTERIZER_BACKWARD_H_INCLUDED
 
 #include <cuda.h>
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #define GLM_FORCE_CUDA
@@ -30,16 +31,19 @@ namespace BACKWARD
 		const float4* conic_opacity,
 		const float* colors,
 		const float* depths,
+		const float* clip_features,
 		const float* accum_alphas,
 		const uint32_t* n_contrib,
 		const float* dL_dpixels,
 		const float* dL_dpixel_depths,
 		const float* dL_dpixel_alphas,
+		const float* dL_dpixel_clips, // 新增：CLIP特征梯度输入 [768][H][W]
 		float3* dL_dmean2D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
 		float* dL_dcolors,
-		float* dL_ddepths);
+		float* dL_ddepths,
+		float* dL_dclip); // 新增：CLIP特征梯度输出 [P][768]
 
 	void preprocess(
 		int P, int D, int M,

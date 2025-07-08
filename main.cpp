@@ -64,6 +64,7 @@ void runForward(const std::filesystem::path args_path)
     const int image_width = load_scalar<int>(args_path / "image_width.pt");
     const torch::Tensor sh = load_tensor(args_path / "sh.pt").to(torch::kCUDA);
     const int sh_degree = load_scalar<int>(args_path / "sh_degree.pt");
+    const torch::Tensor clip_features;
     const torch::Tensor campos = load_tensor(args_path / "campos.pt").to(torch::kCUDA);
     const bool prefiltered = load_scalar<bool>(args_path / "prefiltered.pt");
     const bool debug = load_scalar<bool>(args_path / "debug.pt");          
@@ -84,6 +85,7 @@ void runForward(const std::filesystem::path args_path)
         image_height,
         image_width,
         sh,
+        clip_features,
         sh_degree,
         campos,
         prefiltered,
@@ -110,20 +112,22 @@ void runBackward(const std::filesystem::path args_path)
 
     const torch::Tensor grad_color = load_tensor(args_path / "grad_out_color.pt").to(torch::kCUDA);
     const torch::Tensor grad_depth = load_tensor(args_path / "grad_depth.pt").to(torch::kCUDA);
+    const torch::Tensor grad_clip;
     const torch::Tensor alpha = load_tensor(args_path / "alpha.pt").to(torch::kCUDA);
     const torch::Tensor grad_alpha = load_tensor(args_path / "grad_out_alpha.pt").to(torch::kCUDA);
     const torch::Tensor sh = load_tensor(args_path / "sh.pt").to(torch::kCUDA);
     const int sh_degree = load_scalar<int>(args_path / "sh_degree.pt");
+    const torch::Tensor clip_features;
     const torch::Tensor campos = load_tensor(args_path / "campos.pt").to(torch::kCUDA);
     const torch::Tensor geomBuffer = load_tensor(args_path / "geomBuffer.pt").to(torch::kCUDA);
     const int num_rendered = load_scalar<int>(args_path / "num_rendered.pt");
     const torch::Tensor binningBuffer = load_tensor(args_path / "binningBuffer.pt").to(torch::kCUDA);
     const torch::Tensor imgBuffer = load_tensor(args_path / "imgBuffer.pt").to(torch::kCUDA);
     const bool debug = load_scalar<bool>(args_path / "debug.pt");
-    torch::Tensor dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations;
+    torch::Tensor dL_dmeans2D, dL_dcolors, dl_clips, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations;
 
     printTensorInfo(viewmatrix, true);
-    std::tie(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations) = RasterizeGaussiansBackwardCUDA(
+    std::tie(dL_dmeans2D, dL_dcolors, dl_clips, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dsh, dL_dscales, dL_drotations) = RasterizeGaussiansBackwardCUDA(
         background,
         means3D,
         radii,
@@ -140,6 +144,8 @@ void runBackward(const std::filesystem::path args_path)
         grad_depth,
         grad_alpha,
         sh,
+        clip_features,
+        grad_clip,
         sh_degree,
         campos,
         geomBuffer,
@@ -153,7 +159,7 @@ void runBackward(const std::filesystem::path args_path)
 
 int main()
 {
-    std::filesystem::path args_path = "/home/vy/projects/gaussian-rasterizer/test_data";
+    std::filesystem::path args_path = "/home/zcl/openscene_ws/code_repo/gaussian-rasterizer/test_data";
     runForward(args_path / "forward_tensors");
     runBackward(args_path / "backward_tensors");
     return 0;
